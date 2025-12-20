@@ -1,0 +1,13 @@
+dist
+node_modules
+.env
+.env.local
+.env.production.local
+uploads
+data
+*.db
+*.log
+.DS_Store
+.vscode
+.idea
+.vercel
