@@ -30,7 +30,7 @@ export default function Register({ onSwitchToLogin }) {
     try {
       await register(email, password, name);
     } catch (err) {
-      setError(err.response?.data?.error || 'Registration failed');
+      setError(err.message || 'Registration failed');
     } finally {
       setLoading(false);
     }

@@ -1,6 +1,6 @@
-import jwt from 'jsonwebtoken';
+import { getOrCreateUserFromToken, verifyFirebaseToken } from '../services/firebaseAuth.js';
 
-export function authenticateToken(req, res, next) {
+export async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -9,9 +9,9 @@ export function authenticateToken(req, res, next) {
   }
 
   try {
-    const user = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = user;
-    next();
+    const decodedToken = await verifyFirebaseToken(token);
+    req.user = getOrCreateUserFromToken(decodedToken);
+    return next();
   } catch (error) {
     return res.status(403).json({ error: 'Invalid or expired token' });
   }

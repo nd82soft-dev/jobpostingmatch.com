@@ -27,12 +27,18 @@ export function initDatabase() {
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
       name TEXT,
+      firebase_uid TEXT UNIQUE,
       subscription_tier TEXT DEFAULT 'free',
       subscription_expires_at INTEGER,
       created_at INTEGER DEFAULT (strftime('%s', 'now')),
       updated_at INTEGER DEFAULT (strftime('%s', 'now'))
     )
   `);
+  const userColumns = db.prepare('PRAGMA table_info(users)').all();
+  const hasFirebaseUid = userColumns.some(column => column.name === 'firebase_uid');
+  if (!hasFirebaseUid) {
+    db.exec('ALTER TABLE users ADD COLUMN firebase_uid TEXT UNIQUE');
+  }
 
   // Resumes table
   db.exec(`

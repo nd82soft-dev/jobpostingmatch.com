@@ -1,53 +1,61 @@
 import { createContext, useState, useContext, useEffect } from 'react';
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile
+} from 'firebase/auth';
 import api from '../utils/api';
+import { auth } from '../firebase';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(localStorage.getItem('token'));
 
   useEffect(() => {
-    if (token) {
-      // Verify token and get user
-      api.get('/auth/me')
-        .then(response => {
-          setUser(response.data.user);
-        })
-        .catch(() => {
-          localStorage.removeItem('token');
-          setToken(null);
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    } else {
-      setLoading(false);
-    }
-  }, [token]);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const response = await api.get('/auth/me');
+        setUser(response.data.user);
+      } catch (error) {
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const login = async (email, password) => {
-    const response = await api.post('/auth/login', { email, password });
-    const { token, user } = response.data;
-    localStorage.setItem('token', token);
-    setToken(token);
-    setUser(user);
-    return user;
+    await signInWithEmailAndPassword(auth, email, password);
+    const response = await api.get('/auth/me');
+    setUser(response.data.user);
+    return response.data.user;
   };
 
   const register = async (email, password, name) => {
-    const response = await api.post('/auth/register', { email, password, name });
-    const { token, user } = response.data;
-    localStorage.setItem('token', token);
-    setToken(token);
-    setUser(user);
-    return user;
+    const credential = await createUserWithEmailAndPassword(auth, email, password);
+    if (name) {
+      await updateProfile(credential.user, { displayName: name });
+    }
+    await credential.user.getIdToken(true);
+    const response = await api.get('/auth/me');
+    setUser(response.data.user);
+    return response.data.user;
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
+    signOut(auth);
     setUser(null);
   };
 
