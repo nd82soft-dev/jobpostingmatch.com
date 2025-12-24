@@ -108,6 +108,47 @@
   cursor: not-allowed;
 }
 
+.btn-google {
+  padding: clamp(12px, 3vw, 14px);
+  background: #fff;
+  color: #111827;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: clamp(14px, 3vw, 16px);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  width: 100%;
+}
+
+.btn-google:hover:not(:disabled) {
+  border-color: #cbd5f5;
+  box-shadow: 0 10px 20px rgba(102, 126, 234, 0.15);
+  transform: translateY(-1px);
+}
+
+.btn-google:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0;
+  color: #6b7280;
+  font-size: clamp(12px, 2.5vw, 13px);
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+
 .auth-switch {
   text-align: center;
   margin-top: 24px;

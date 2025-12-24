@@ -1,44 +1,9 @@
 import express from 'express';
 import { db } from '../database/init.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { fetchLinkedInJob, parseJobDescription } from '../services/linkedin.js';
+import { parseJobDescription } from '../services/jobParser.js';
 
 const router = express.Router();
-
-// Fetch job from LinkedIn URL
-router.post('/fetch', authenticateToken, async (req, res) => {
-  try {
-    const { url } = req.body;
-
-    if (!url) {
-      return res.status(400).json({ error: 'URL required' });
-    }
-
-    // Fetch and parse LinkedIn job
-    const jobData = await fetchLinkedInJob(url);
-
-    // Save to database
-    const result = db.prepare(`
-      INSERT INTO jobs (user_id, title, company, url, description, parsed_data)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      req.user.id,
-      jobData.title,
-      jobData.company || null,
-      url,
-      jobData.description,
-      JSON.stringify(jobData.parsed)
-    );
-
-    res.json({
-      id: result.lastInsertRowid,
-      ...jobData
-    });
-  } catch (error) {
-    console.error('Fetch job error:', error);
-    res.status(500).json({ error: 'Failed to fetch job posting' });
-  }
-});
 
 // Create job from manual input
 router.post('/', authenticateToken, async (req, res) => {

@@ -95,7 +95,7 @@ export default function Dashboard({ onNavigate, onSelectResume, onSelectJob }) {
         <button onClick={() => onNavigate('job-input')} className="action-card">
           <span className="action-icon">💼</span>
           <h3>Add Job Posting</h3>
-          <p>Paste LinkedIn URL or description</p>
+          <p>Paste a job description</p>
         </button>
 
         {selectedResumeId && selectedJobId && (
@@ -192,3 +192,4 @@ export default function Dashboard({ onNavigate, onSelectResume, onSelectJob }) {
     </div>
   );
 }
+

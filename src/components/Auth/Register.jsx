@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import './Auth.css';
 
 export default function Register({ onSwitchToLogin }) {
-  const { register } = useAuth();
+  const { register, loginWithGoogle } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -36,6 +36,19 @@ export default function Register({ onSwitchToLogin }) {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setError('');
+    setLoading(true);
+
+    try {
+      await loginWithGoogle();
+    } catch (err) {
+      setError(err.message || 'Google sign-in failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="auth-container">
       <div className="auth-card">
@@ -43,6 +56,14 @@ export default function Register({ onSwitchToLogin }) {
         <p className="auth-subtitle">Join ResumePro AI</p>
 
         {error && <div className="auth-error">{error}</div>}
+
+        <button type="button" className="btn-google" onClick={handleGoogleLogin} disabled={loading}>
+          Continue with Google
+        </button>
+
+        <div className="auth-divider">
+          <span>or</span>
+        </div>
 
         <form onSubmit={handleSubmit} className="auth-form">
           <div className="form-group">

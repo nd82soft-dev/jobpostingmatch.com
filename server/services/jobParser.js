@@ -1,60 +1,8 @@
-import axios from 'axios';
-import * as cheerio from 'cheerio';
 import Anthropic from '@anthropic-ai/sdk';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
 });
-
-// Fetch job posting from LinkedIn URL
-export async function fetchLinkedInJob(url) {
-  try {
-    // LinkedIn requires user agent and may block automated requests
-    // This is a simplified version - production would need more robust handling
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      },
-      timeout: 10000
-    });
-
-    const $ = cheerio.load(response.data);
-
-    // Extract job details from LinkedIn page structure
-    const title = $('h1.top-card-layout__title').text().trim() ||
-                  $('h1').first().text().trim();
-
-    const company = $('a.topcard__org-name-link').text().trim() ||
-                    $('.topcard__flavor--black-link').first().text().trim();
-
-    const description = $('.description__text').text().trim() ||
-                        $('.show-more-less-html__markup').text().trim() ||
-                        $('div[class*="description"]').text().trim();
-
-    if (!description) {
-      throw new Error('Could not extract job description from URL');
-    }
-
-    // Parse the job description using AI
-    const parsed = await parseJobDescription(description);
-
-    return {
-      title: title || 'Job Posting',
-      company,
-      description,
-      parsed
-    };
-  } catch (error) {
-    console.error('LinkedIn fetch error:', error);
-
-    // Fallback: If direct scraping fails, try to get basic content
-    if (error.response?.status === 403 || error.response?.status === 429) {
-      throw new Error('LinkedIn access blocked. Please paste the job description manually.');
-    }
-
-    throw new Error('Failed to fetch LinkedIn job posting');
-  }
-}
 
 // Parse job description using AI
 export async function parseJobDescription(description) {
