@@ -6,7 +6,7 @@
     "dev": "concurrently \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
     "dev:server": "npm --prefix server run dev",
     "dev:client": "npm --prefix client run dev",
-    "build": "npm --prefix client run build",
+    "build": "node -e \"const fs=require('fs');const {execSync}=require('child_process');if(fs.existsSync('client/package.json')){execSync('npm --prefix client run build',{stdio:'inherit'});}else{console.log('Skipping client build: client/package.json not found.');}\"",
     "preview": "npm --prefix client run preview",
     "start": "npm --prefix server run start"
   },
