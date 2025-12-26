@@ -81,8 +81,11 @@ JWT_SECRET=generate-a-random-32-char-string-here
 # AI API
 ANTHROPIC_API_KEY=sk-ant-your-api-key-here
 
-# Database
-DATABASE_PATH=./data/resumepro.db
+# Firebase Admin (server)
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_CLIENT_EMAIL=your-firebase-client-email
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+FIREBASE_STORAGE_BUCKET=your-project-id.appspot.com
 
 # Frontend
 FRONTEND_URL=http://localhost:5173
@@ -111,6 +114,8 @@ openssl rand -hex 32
 ---
 
 ## Database Setup
+
+Firestore (Firebase) is now the primary database. SQLite is legacy and only used for one-time migration.
 
 ### SQLite (Default - Easiest)
 

@@ -1,4 +1,4 @@
-# ResumePro AI - Premium Resume & Job Match Analyzer
+# jobpostingmatch.com - Premium Resume & Job Match Analyzer
 
 🎯 **Upload your resume. See exactly why you're not getting interviews — and fix it.**
 
@@ -22,7 +22,7 @@ A production-ready web application that analyzes resumes against job postings, p
 
 ### Technical Highlights
 - **Full-Stack Application** - React frontend + Node.js/Express backend
-- **Database** - SQLite (easily upgradeable to PostgreSQL)
+- **Database** - Firestore + Firebase Storage
 - **AI Integration** - Anthropic Claude API for intelligent analysis
 - **Document Processing** - Mammoth (DOCX), PDF-parse (PDF), PDFKit & DOCX libraries for generation
 - **Security** - bcrypt, JWT, helmet, rate limiting
@@ -31,7 +31,7 @@ A production-ready web application that analyzes resumes against job postings, p
 ## 🏗️ Architecture
 
 ```
-resumepro-ai/
+jobpostingmatch.com/
 ├── server/                # Backend (Node.js/Express)
 │   ├── index.js          # Main server entry point
 │   ├── database/         # Database initialization & schema
@@ -75,7 +75,7 @@ resumepro-ai/
 1. **Clone the repository**
 ```bash
 git clone <your-repo-url>
-cd resumepro-ai
+cd jobpostingmatch.com
 ```
 
 2. **Install dependencies**
@@ -91,9 +91,11 @@ cp .env.example .env
 Edit `.env` and add your configuration:
 ```env
 PORT=3001
-JWT_SECRET=your-super-secret-jwt-key-change-this
 ANTHROPIC_API_KEY=your-anthropic-api-key-here
-DATABASE_PATH=./data/resumepro.db
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_CLIENT_EMAIL=your-firebase-client-email
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+FIREBASE_STORAGE_BUCKET=your-project-id.appspot.com
 FRONTEND_URL=http://localhost:5173
 ```
 
