@@ -1,34 +1,16 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-import { db } from '../database/init.js';
+import crypto from 'crypto';
 import { authenticateToken } from '../middleware/auth.js';
-import { parseResume } from '../services/parser.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { parseResumeBuffer } from '../services/parser.js';
+import { incrementMetric } from '../services/metrics.js';
+import { getFirestore, getStorageBucket, getTimestamp } from '../services/firestore.js';
 
 const router = express.Router();
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = process.env.UPLOAD_DIR || './uploads';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['.pdf', '.doc', '.docx', '.txt'];
@@ -41,6 +23,34 @@ const upload = multer({
   }
 });
 
+function buildParsedText(parsedData) {
+  const experience = (parsedData?.experience || []).map((exp) => {
+    return [exp.title, exp.company, exp.description].filter(Boolean).join(' - ');
+  }).filter(Boolean);
+
+  const education = (parsedData?.education || []).map((edu) => {
+    return [edu.degree, edu.details].filter(Boolean).join(' - ');
+  }).filter(Boolean);
+
+  return {
+    summary: parsedData?.summary || '',
+    experience,
+    skills: parsedData?.skills || [],
+    education
+  };
+}
+
+async function parseResumeFromStorage(storagePath, originalFormat) {
+  if (!storagePath || !originalFormat) return null;
+  try {
+    const bucket = getStorageBucket();
+    const [buffer] = await bucket.file(storagePath).download();
+    return parseResumeBuffer(buffer, `.${originalFormat}`);
+  } catch (error) {
+    return null;
+  }
+}
+
 // Upload and parse resume
 router.post('/upload', authenticateToken, upload.single('resume'), async (req, res) => {
   try {
@@ -49,154 +59,237 @@ router.post('/upload', authenticateToken, upload.single('resume'), async (req, r
     }
 
     const { name } = req.body;
-    const filePath = req.file.path;
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const originalFormat = ext.replace('.', '');
+    const resumeId = crypto.randomUUID();
+    const userId = req.user.id;
+    const storagePath = `resumes/${userId}/${resumeId}`;
 
-    // Parse the resume
-    const { text, parsedData } = await parseResume(filePath);
+    const bucket = getStorageBucket();
+    await bucket.file(storagePath).save(req.file.buffer, {
+      resumable: false,
+      contentType: req.file.mimetype
+    });
 
-    // Save to database
-    const result = db.prepare(`
-      INSERT INTO resumes (user_id, name, content, parsed_data, template_id)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(
-      req.user.id,
-      name || 'My Resume',
-      text,
-      JSON.stringify(parsedData),
-      'modern'
-    );
+    const { parsedData } = await parseResumeBuffer(req.file.buffer, ext);
+    const parsedText = buildParsedText(parsedData);
+    const Timestamp = getTimestamp();
+    const createdAt = Timestamp.now();
 
-    // Delete uploaded file after parsing
-    fs.unlinkSync(filePath);
+    const db = getFirestore();
+    await db.collection('resumes').doc(resumeId).set({
+      userId,
+      name: name || 'My Resume',
+      storagePath,
+      originalFormat,
+      parsedText,
+      template_id: 'premium_professional',
+      template_config: {},
+      is_favorite: false,
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    await incrementMetric('resumes_uploaded');
 
     res.json({
-      id: result.lastInsertRowid,
+      id: resumeId,
       name: name || 'My Resume',
-      content: text,
       parsedData,
-      template_id: 'modern'
+      template_id: 'premium_professional'
     });
   } catch (error) {
-    console.error('Upload error:', error);
-    // Clean up file if exists
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
+    console.error('Upload error:', error?.message || error);
     res.status(500).json({ error: 'Failed to upload resume' });
   }
 });
 
 // Get all resumes for user
 router.get('/', authenticateToken, (req, res) => {
-  try {
-    const resumes = db.prepare(`
-      SELECT id, name, template_id, is_favorite, created_at, updated_at
-      FROM resumes
-      WHERE user_id = ?
-      ORDER BY created_at DESC
-    `).all(req.user.id);
+  (async () => {
+    try {
+      const db = getFirestore();
+      const snapshot = await db.collection('resumes')
+        .where('userId', '==', req.user.id)
+        .orderBy('createdAt', 'desc')
+        .get();
 
-    res.json({ resumes });
-  } catch (error) {
-    console.error('Get resumes error:', error);
-    res.status(500).json({ error: 'Failed to get resumes' });
-  }
+      const resumes = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name,
+          template_id: data.template_id,
+          template_config: data.template_config || {},
+          is_favorite: data.is_favorite || 0,
+          created_at: data.createdAt?.seconds || null,
+          updated_at: data.updatedAt?.seconds || null
+        };
+      });
+
+      res.json({ resumes });
+    } catch (error) {
+      console.error('Get resumes error:', error?.message || error);
+      res.status(500).json({ error: 'Failed to get resumes' });
+    }
+  })();
 });
 
 // Get single resume
 router.get('/:id', authenticateToken, (req, res) => {
-  try {
-    const resume = db.prepare(`
-      SELECT * FROM resumes WHERE id = ? AND user_id = ?
-    `).get(req.params.id, req.user.id);
+  (async () => {
+    try {
+      const db = getFirestore();
+      const doc = await db.collection('resumes').doc(req.params.id).get();
+      if (!doc.exists) {
+        return res.status(404).json({ error: 'Resume not found' });
+      }
+      const data = doc.data();
+      if (data.userId !== req.user.id) {
+        return res.status(404).json({ error: 'Resume not found' });
+      }
 
-    if (!resume) {
-      return res.status(404).json({ error: 'Resume not found' });
+      let parsedData = null;
+      if (data.storagePath && data.originalFormat) {
+        const parsed = await parseResumeFromStorage(data.storagePath, data.originalFormat);
+        parsedData = parsed?.parsedData || null;
+      }
+
+      res.json({
+        id: doc.id,
+        name: data.name,
+        template_id: data.template_id,
+        template_config: data.template_config || {},
+        parsed_data: parsedData || {
+          summary: data.parsedText?.summary || '',
+          experience: [],
+          skills: data.parsedText?.skills || [],
+          education: []
+        },
+        created_at: data.createdAt?.seconds || null,
+        updated_at: data.updatedAt?.seconds || null
+      });
+    } catch (error) {
+      console.error('Get resume error:', error?.message || error);
+      res.status(500).json({ error: 'Failed to get resume' });
     }
-
-    res.json({
-      ...resume,
-      parsed_data: JSON.parse(resume.parsed_data || '{}'),
-      template_config: JSON.parse(resume.template_config || '{}')
-    });
-  } catch (error) {
-    console.error('Get resume error:', error);
-    res.status(500).json({ error: 'Failed to get resume' });
-  }
+  })();
 });
 
 // Update resume
 router.put('/:id', authenticateToken, (req, res) => {
-  try {
-    const { name, content, parsed_data, template_id, template_config } = req.body;
+  (async () => {
+    try {
+      const { name, parsed_data, template_id, template_config, job_id } = req.body;
+      const db = getFirestore();
+      const docRef = db.collection('resumes').doc(req.params.id);
+      const doc = await docRef.get();
+      if (!doc.exists || doc.data().userId !== req.user.id) {
+        return res.status(404).json({ error: 'Resume not found' });
+      }
 
-    const resume = db.prepare('SELECT id FROM resumes WHERE id = ? AND user_id = ?')
-      .get(req.params.id, req.user.id);
+      const updates = {};
+      if (name) updates.name = name;
+      if (template_id) updates.template_id = template_id;
+      if (template_config) {
+        if (typeof template_config === 'string') {
+          try {
+            updates.template_config = JSON.parse(template_config);
+          } catch (error) {
+            return res.status(400).json({ error: 'Invalid template_config JSON' });
+          }
+        } else {
+          updates.template_config = template_config;
+        }
+      }
 
-    if (!resume) {
-      return res.status(404).json({ error: 'Resume not found' });
+      if (parsed_data) {
+        const jobKey = job_id || 'manual';
+        updates[`optimizedVersions.${jobKey}`] = {
+          template: template_id || doc.data().template_id || 'premium_professional',
+          industryVariant: updates.template_config?.variant || doc.data().template_config?.variant || null,
+          content: parsed_data,
+          atsScore: parsed_data?.atsScore || null,
+          createdAt: getTimestamp().now()
+        };
+      }
+
+      updates.updatedAt = getTimestamp().now();
+      await docRef.set(updates, { merge: true });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Update resume error:', error?.message || error);
+      res.status(500).json({ error: 'Failed to update resume' });
     }
-
-    db.prepare(`
-      UPDATE resumes
-      SET name = COALESCE(?, name),
-          content = COALESCE(?, content),
-          parsed_data = COALESCE(?, parsed_data),
-          template_id = COALESCE(?, template_id),
-          template_config = COALESCE(?, template_config),
-          updated_at = strftime('%s', 'now')
-      WHERE id = ?
-    `).run(
-      name || null,
-      content || null,
-      parsed_data ? JSON.stringify(parsed_data) : null,
-      template_id || null,
-      template_config ? JSON.stringify(template_config) : null,
-      req.params.id
-    );
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Update resume error:', error);
-    res.status(500).json({ error: 'Failed to update resume' });
-  }
+  })();
 });
 
 // Delete resume
 router.delete('/:id', authenticateToken, (req, res) => {
-  try {
-    const result = db.prepare('DELETE FROM resumes WHERE id = ? AND user_id = ?')
-      .run(req.params.id, req.user.id);
+  (async () => {
+    try {
+      const db = getFirestore();
+      const docRef = db.collection('resumes').doc(req.params.id);
+      const doc = await docRef.get();
+      if (!doc.exists || doc.data().userId !== req.user.id) {
+        return res.status(404).json({ error: 'Resume not found' });
+      }
 
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Resume not found' });
+      const data = doc.data();
+      if (data.storagePath) {
+        const bucket = getStorageBucket();
+        await bucket.file(data.storagePath).delete().catch(() => {});
+      }
+
+      const analysesSnap = await db.collection('analyses')
+        .where('userId', '==', req.user.id)
+        .where('resumeId', '==', req.params.id)
+        .get();
+
+      const exportsSnap = await db.collection('exports')
+        .where('userId', '==', req.user.id)
+        .where('resumeId', '==', req.params.id)
+        .get();
+
+      const batch = db.batch();
+      analysesSnap.docs.forEach((docItem) => batch.delete(docItem.ref));
+      exportsSnap.docs.forEach((docItem) => batch.delete(docItem.ref));
+      batch.delete(docRef);
+      await batch.commit();
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Delete resume error:', error?.message || error);
+      res.status(500).json({ error: 'Failed to delete resume' });
     }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Delete resume error:', error);
-    res.status(500).json({ error: 'Failed to delete resume' });
-  }
+  })();
 });
 
 // Toggle favorite
 router.patch('/:id/favorite', authenticateToken, (req, res) => {
-  try {
-    const resume = db.prepare('SELECT is_favorite FROM resumes WHERE id = ? AND user_id = ?')
-      .get(req.params.id, req.user.id);
+  (async () => {
+    try {
+      const db = getFirestore();
+      const docRef = db.collection('resumes').doc(req.params.id);
+      const doc = await docRef.get();
+      if (!doc.exists || doc.data().userId !== req.user.id) {
+        return res.status(404).json({ error: 'Resume not found' });
+      }
 
-    if (!resume) {
-      return res.status(404).json({ error: 'Resume not found' });
+      const current = doc.data().is_favorite ? 1 : 0;
+      const next = current ? 0 : 1;
+      await docRef.set({
+        is_favorite: next,
+        updatedAt: getTimestamp().now()
+      }, { merge: true });
+
+      res.json({ is_favorite: !!next });
+    } catch (error) {
+      console.error('Toggle favorite error:', error?.message || error);
+      res.status(500).json({ error: 'Failed to toggle favorite' });
     }
-
-    db.prepare('UPDATE resumes SET is_favorite = ? WHERE id = ?')
-      .run(resume.is_favorite ? 0 : 1, req.params.id);
-
-    res.json({ is_favorite: !resume.is_favorite });
-  } catch (error) {
-    console.error('Toggle favorite error:', error);
-    res.status(500).json({ error: 'Failed to toggle favorite' });
-  }
+  })();
 });
 
 export default router;

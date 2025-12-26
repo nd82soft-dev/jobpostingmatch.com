@@ -1,45 +1,95 @@
 import express from 'express';
-import { db } from '../database/init.js';
 import { authenticateToken, checkSubscription } from '../middleware/auth.js';
 import { generatePDF } from '../services/pdf-generator.js';
 import { generateDOCX } from '../services/docx-generator.js';
-import path from 'path';
+import { incrementMetric } from '../services/metrics.js';
+import { getFirestore, getStorageBucket, getTimestamp } from '../services/firestore.js';
+import { parseResumeBuffer } from '../services/parser.js';
 import fs from 'fs';
 
 const router = express.Router();
 
+function pickLatestOptimized(optimizedVersions) {
+  if (!optimizedVersions) return null;
+  let latest = null;
+  let latestSeconds = 0;
+  Object.values(optimizedVersions).forEach((version) => {
+    const seconds = version?.createdAt?.seconds || 0;
+    if (seconds > latestSeconds) {
+      latest = version;
+      latestSeconds = seconds;
+    }
+  });
+  return latest;
+}
+
+async function resolveResumeData(resume) {
+  const optimized = pickLatestOptimized(resume.optimizedVersions);
+  if (optimized?.content) {
+    return optimized.content;
+  }
+
+  if (resume.storagePath && resume.originalFormat) {
+    try {
+      const bucket = getStorageBucket();
+      const [buffer] = await bucket.file(resume.storagePath).download();
+      const parsed = await parseResumeBuffer(buffer, `.${resume.originalFormat}`);
+      const data = parsed.parsedData || {};
+      if (!data.name && resume.name) {
+        data.name = resume.name;
+      }
+      return data;
+    } catch (error) {
+      // Fall through to parsedText fallback.
+    }
+  }
+
+  return {
+    name: resume.name || 'Your Name',
+    summary: resume.parsedText?.summary || '',
+    skills: resume.parsedText?.skills || [],
+    experience: [],
+    education: []
+  };
+}
+
+async function recordExport(db, userId, resumeId, format) {
+  const Timestamp = getTimestamp();
+  await db.collection('exports').add({
+    userId,
+    resumeId,
+    format,
+    created_at: Timestamp.now()
+  });
+}
+
 // Export resume as PDF
 router.post('/pdf/:resume_id', authenticateToken, checkSubscription, async (req, res) => {
   try {
-    const resume = db.prepare('SELECT * FROM resumes WHERE id = ? AND user_id = ?')
-      .get(req.params.resume_id, req.user.id);
-
-    if (!resume) {
+    const db = getFirestore();
+    const resumeDoc = await db.collection('resumes').doc(req.params.resume_id).get();
+    if (!resumeDoc.exists || resumeDoc.data().userId !== req.user.id) {
       return res.status(404).json({ error: 'Resume not found' });
     }
 
-    const parsedData = JSON.parse(resume.parsed_data || '{}');
-    const templateConfig = JSON.parse(resume.template_config || '{}');
+    const resume = resumeDoc.data();
+    const resumeData = await resolveResumeData(resume);
+    const templateConfig = resume.template_config || {};
+    const templateId = resume.template_id || 'premium_professional';
 
-    // Generate PDF
-    const pdfPath = await generatePDF(parsedData, resume.template_id, templateConfig);
+    const pdfPath = await generatePDF(resumeData, templateId, templateConfig);
+    await recordExport(db, req.user.id, resumeDoc.id, 'pdf');
+    await incrementMetric('exports_pdf');
 
-    // Save export record
-    db.prepare(`
-      INSERT INTO exports (user_id, resume_id, format, file_path)
-      VALUES (?, ?, ?, ?)
-    `).run(req.user.id, resume.id, 'pdf', pdfPath);
-
-    // Send file
-    res.download(pdfPath, `${resume.name}.pdf`, (err) => {
+    const fileBase = resume.name || 'resume';
+    res.download(pdfPath, `${fileBase}.pdf`, (err) => {
       if (err) {
-        console.error('Download error:', err);
+        console.error('Download error:', err?.message || err);
       }
-      // Clean up file after sending
       fs.unlinkSync(pdfPath);
     });
   } catch (error) {
-    console.error('PDF export error:', error);
+    console.error('PDF export error:', error?.message || error);
     res.status(500).json({ error: 'Failed to generate PDF' });
   }
 });
@@ -47,60 +97,61 @@ router.post('/pdf/:resume_id', authenticateToken, checkSubscription, async (req,
 // Export resume as DOCX
 router.post('/docx/:resume_id', authenticateToken, checkSubscription, async (req, res) => {
   try {
-    const resume = db.prepare('SELECT * FROM resumes WHERE id = ? AND user_id = ?')
-      .get(req.params.resume_id, req.user.id);
-
-    if (!resume) {
+    const db = getFirestore();
+    const resumeDoc = await db.collection('resumes').doc(req.params.resume_id).get();
+    if (!resumeDoc.exists || resumeDoc.data().userId !== req.user.id) {
       return res.status(404).json({ error: 'Resume not found' });
     }
 
-    const parsedData = JSON.parse(resume.parsed_data || '{}');
-    const templateConfig = JSON.parse(resume.template_config || '{}');
+    const resume = resumeDoc.data();
+    const resumeData = await resolveResumeData(resume);
+    const templateConfig = resume.template_config || {};
+    const templateId = resume.template_id || 'premium_professional';
 
-    // Generate DOCX
-    const docxPath = await generateDOCX(parsedData, resume.template_id, templateConfig);
+    const docxPath = await generateDOCX(resumeData, templateId, templateConfig);
+    await recordExport(db, req.user.id, resumeDoc.id, 'docx');
+    await incrementMetric('exports_docx');
 
-    // Save export record
-    db.prepare(`
-      INSERT INTO exports (user_id, resume_id, format, file_path)
-      VALUES (?, ?, ?, ?)
-    `).run(req.user.id, resume.id, 'docx', docxPath);
-
-    // Send file
-    res.download(docxPath, `${resume.name}.docx`, (err) => {
+    const fileBase = resume.name || 'resume';
+    res.download(docxPath, `${fileBase}.docx`, (err) => {
       if (err) {
-        console.error('Download error:', err);
+        console.error('Download error:', err?.message || err);
       }
-      // Clean up file after sending
       fs.unlinkSync(docxPath);
     });
   } catch (error) {
-    console.error('DOCX export error:', error);
+    console.error('DOCX export error:', error?.message || error);
     res.status(500).json({ error: 'Failed to generate DOCX' });
   }
 });
 
 // Get export history
 router.get('/history', authenticateToken, (req, res) => {
-  try {
-    const exports = db.prepare(`
-      SELECT
-        e.id,
-        e.format,
-        e.created_at,
-        r.name as resume_name
-      FROM exports e
-      JOIN resumes r ON e.resume_id = r.id
-      WHERE e.user_id = ?
-      ORDER BY e.created_at DESC
-      LIMIT 50
-    `).all(req.user.id);
+  (async () => {
+    try {
+      const db = getFirestore();
+      const snapshot = await db.collection('exports')
+        .where('userId', '==', req.user.id)
+        .orderBy('created_at', 'desc')
+        .limit(50)
+        .get();
 
-    res.json({ exports });
-  } catch (error) {
-    console.error('Get export history error:', error);
-    res.status(500).json({ error: 'Failed to get export history' });
-  }
+      const exportsData = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          format: data.format,
+          created_at: data.created_at?.seconds || null,
+          resume_id: data.resumeId
+        };
+      });
+
+      res.json({ exports: exportsData });
+    } catch (error) {
+      console.error('Get export history error:', error?.message || error);
+      res.status(500).json({ error: 'Failed to get export history' });
+    }
+  })();
 });
 
 export default router;

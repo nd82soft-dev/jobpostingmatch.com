@@ -48,7 +48,7 @@ export function initDatabase() {
       name TEXT NOT NULL,
       content TEXT NOT NULL,
       parsed_data TEXT,
-      template_id TEXT DEFAULT 'modern',
+      template_id TEXT DEFAULT 'premium_professional',
       template_config TEXT,
       is_favorite INTEGER DEFAULT 0,
       created_at INTEGER DEFAULT (strftime('%s', 'now')),
@@ -102,6 +102,27 @@ export function initDatabase() {
       created_at INTEGER DEFAULT (strftime('%s', 'now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (resume_id) REFERENCES resumes(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Daily metrics table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS daily_metrics (
+      day TEXT PRIMARY KEY,
+      visits INTEGER DEFAULT 0,
+      resumes_uploaded INTEGER DEFAULT 0,
+      optimized_resumes INTEGER DEFAULT 0,
+      exports_pdf INTEGER DEFAULT 0,
+      exports_docx INTEGER DEFAULT 0
+    )
+  `);
+
+  // Daily unique visitors table (hashed)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS daily_unique_visitors (
+      day TEXT NOT NULL,
+      visitor_key TEXT NOT NULL,
+      PRIMARY KEY (day, visitor_key)
     )
   `);
 

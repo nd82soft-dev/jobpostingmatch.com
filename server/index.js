@@ -12,9 +12,9 @@ import resumeRoutes from './routes/resume.js';
 import analysisRoutes from './routes/analysis.js';
 import exportRoutes from './routes/export.js';
 import jobRoutes from './routes/job.js';
-
-// Import database
-import { initDatabase } from './database/init.js';
+import metricsRoutes from './routes/metrics.js';
+import adminRoutes from './routes/admin.js';
+import linkedinRoutes from './routes/linkedin.js';
 
 dotenv.config();
 
@@ -24,8 +24,8 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Initialize database
-initDatabase();
+// Trust proxy headers on platforms like Railway
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(helmet());
@@ -50,6 +50,9 @@ app.use('/api/resumes', resumeRoutes);
 app.use('/api/analysis', analysisRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/jobs', jobRoutes);
+app.use('/api/metrics', metricsRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/linkedin', linkedinRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

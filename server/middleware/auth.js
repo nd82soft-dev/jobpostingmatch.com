@@ -10,7 +10,7 @@ export async function authenticateToken(req, res, next) {
 
   try {
     const decodedToken = await verifyFirebaseToken(token);
-    req.user = getOrCreateUserFromToken(decodedToken);
+    req.user = await getOrCreateUserFromToken(decodedToken);
     return next();
   } catch (error) {
     return res.status(403).json({ error: 'Invalid or expired token' });

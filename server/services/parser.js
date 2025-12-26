@@ -6,25 +6,27 @@ import pdfParse from 'pdf-parse';
 // Parse resume file
 export async function parseResume(filePath) {
   const ext = path.extname(filePath).toLowerCase();
+  const buffer = fs.readFileSync(filePath);
+  return parseResumeBuffer(buffer, ext);
+}
+
+export async function parseResumeBuffer(buffer, ext) {
   let text = '';
 
   try {
     if (ext === '.pdf') {
-      const dataBuffer = fs.readFileSync(filePath);
-      const pdfData = await pdfParse(dataBuffer);
+      const pdfData = await pdfParse(buffer);
       text = pdfData.text;
     } else if (ext === '.docx' || ext === '.doc') {
-      const result = await mammoth.extractRawText({ path: filePath });
+      const result = await mammoth.extractRawText({ buffer });
       text = result.value;
     } else if (ext === '.txt') {
-      text = fs.readFileSync(filePath, 'utf-8');
+      text = buffer.toString('utf-8');
     } else {
       throw new Error('Unsupported file format');
     }
 
-    // Parse the text into structured data
     const parsedData = parseResumeText(text);
-
     return { text, parsedData };
   } catch (error) {
     console.error('Parse error:', error);

@@ -12,7 +12,7 @@ async function handleFirebaseAuth(req, res) {
     }
 
     const decodedToken = await verifyFirebaseToken(idToken);
-    const user = getOrCreateUserFromToken(decodedToken);
+    const user = await getOrCreateUserFromToken(decodedToken);
     return res.json({ user });
   } catch (error) {
     console.error('Firebase auth error:', error);

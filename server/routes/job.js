@@ -1,7 +1,7 @@
 import express from 'express';
-import { db } from '../database/init.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { parseJobDescription } from '../services/jobParser.js';
+import { getFirestore, getTimestamp } from '../services/firestore.js';
 
 const router = express.Router();
 
@@ -17,84 +17,112 @@ router.post('/', authenticateToken, async (req, res) => {
     // Parse job description
     const parsed = await parseJobDescription(description);
 
-    // Save to database
-    const result = db.prepare(`
-      INSERT INTO jobs (user_id, title, company, description, parsed_data)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(
-      req.user.id,
-      title || 'Untitled Position',
-      company || null,
+    const db = getFirestore();
+    const Timestamp = getTimestamp();
+    const createdAt = Timestamp.now();
+    const jobRef = db.collection('jobs').doc();
+    await jobRef.set({
+      userId: req.user.id,
+      title: title || 'Untitled Position',
+      company: company || null,
       description,
-      JSON.stringify(parsed)
-    );
+      parsed_data: parsed,
+      createdAt
+    });
 
     res.json({
-      id: result.lastInsertRowid,
+      id: jobRef.id,
       title: title || 'Untitled Position',
       company,
       description,
       parsed
     });
   } catch (error) {
-    console.error('Create job error:', error);
+    console.error('Create job error:', error?.message || error);
     res.status(500).json({ error: 'Failed to create job' });
   }
 });
 
 // Get all jobs for user
 router.get('/', authenticateToken, (req, res) => {
-  try {
-    const jobs = db.prepare(`
-      SELECT id, title, company, url, created_at
-      FROM jobs
-      WHERE user_id = ?
-      ORDER BY created_at DESC
-    `).all(req.user.id);
+  (async () => {
+    try {
+      const db = getFirestore();
+      const snapshot = await db.collection('jobs')
+        .where('userId', '==', req.user.id)
+        .orderBy('createdAt', 'desc')
+        .get();
 
-    res.json({ jobs });
-  } catch (error) {
-    console.error('Get jobs error:', error);
-    res.status(500).json({ error: 'Failed to get jobs' });
-  }
+      const jobs = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          title: data.title,
+          company: data.company || null,
+          url: data.url || null,
+          created_at: data.createdAt?.seconds || null
+        };
+      });
+
+      res.json({ jobs });
+    } catch (error) {
+      console.error('Get jobs error:', error?.message || error);
+      res.status(500).json({ error: 'Failed to get jobs' });
+    }
+  })();
 });
 
 // Get single job
 router.get('/:id', authenticateToken, (req, res) => {
-  try {
-    const job = db.prepare(`
-      SELECT * FROM jobs WHERE id = ? AND user_id = ?
-    `).get(req.params.id, req.user.id);
-
-    if (!job) {
-      return res.status(404).json({ error: 'Job not found' });
+  (async () => {
+    try {
+      const db = getFirestore();
+      const doc = await db.collection('jobs').doc(req.params.id).get();
+      if (!doc.exists || doc.data().userId !== req.user.id) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      const data = doc.data();
+      res.json({
+        id: doc.id,
+        title: data.title,
+        company: data.company || null,
+        description: data.description,
+        parsed: data.parsed_data || {}
+      });
+    } catch (error) {
+      console.error('Get job error:', error?.message || error);
+      res.status(500).json({ error: 'Failed to get job' });
     }
-
-    res.json({
-      ...job,
-      parsed: JSON.parse(job.parsed_data || '{}')
-    });
-  } catch (error) {
-    console.error('Get job error:', error);
-    res.status(500).json({ error: 'Failed to get job' });
-  }
+  })();
 });
 
 // Delete job
 router.delete('/:id', authenticateToken, (req, res) => {
-  try {
-    const result = db.prepare('DELETE FROM jobs WHERE id = ? AND user_id = ?')
-      .run(req.params.id, req.user.id);
+  (async () => {
+    try {
+      const db = getFirestore();
+      const docRef = db.collection('jobs').doc(req.params.id);
+      const doc = await docRef.get();
+      if (!doc.exists || doc.data().userId !== req.user.id) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
 
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Job not found' });
+      const analysesSnap = await db.collection('analyses')
+        .where('userId', '==', req.user.id)
+        .where('jobId', '==', req.params.id)
+        .get();
+
+      const batch = db.batch();
+      analysesSnap.docs.forEach((analysisDoc) => batch.delete(analysisDoc.ref));
+      batch.delete(docRef);
+      await batch.commit();
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Delete job error:', error?.message || error);
+      res.status(500).json({ error: 'Failed to delete job' });
     }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Delete job error:', error);
-    res.status(500).json({ error: 'Failed to delete job' });
-  }
+  })();
 });
 
 export default router;
